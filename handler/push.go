@@ -33,7 +33,7 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/prometheus/pushgateway/storage"
+	"github.com/blastbao/pushgateway/storage"
 )
 
 const (
@@ -42,50 +42,69 @@ const (
 	Base64Suffix = "@base64"
 )
 
+
 // Push returns an http.Handler which accepts samples over HTTP and stores them
-// in the MetricStore. If replace is true, all metrics for the job and instance
-// given by the request are deleted before new ones are stored. If check is
-// true, the pushed metrics are immediately checked for consistency (with
-// existing metrics and themselves), and an inconsistent push is rejected with
-// http.StatusBadRequest.
+// in the MetricStore.
+//
+// If replace is true, all metrics for the job and instance given by the request
+// are deleted before new ones are stored.
+//
+// If check is true, the pushed metrics are immediately checked for consistency
+// (with existing metrics and themselves), and an inconsistent push is rejected
+// with http.StatusBadRequest.
 //
 // The returned handler is already instrumented for Prometheus.
-func Push(
-	ms storage.MetricStore,
-	replace, check, jobBase64Encoded bool,
-	logger log.Logger,
-) func(http.ResponseWriter, *http.Request) {
+//
+//
+func Push(ms storage.MetricStore, replace, check, jobBase64Encoded bool, logger log.Logger) func(http.ResponseWriter, *http.Request) {
+
+
 	var mtx sync.Mutex // Protects ps.
 
+
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		// 参数 job
 		job := route.Param(r.Context(), "job")
+
+		// 解码 job
 		if jobBase64Encoded {
+
 			var err error
 			if job, err = decodeBase64(job); err != nil {
 				http.Error(w, fmt.Sprintf("invalid base64 encoding in job name %q: %v", job, err), http.StatusBadRequest)
 				level.Debug(logger).Log("msg", "invalid base64 encoding in job name", "job", job, "err", err.Error())
 				return
 			}
+
 		}
+
+		// 参数 labels
 		labelsString := route.Param(r.Context(), "labels")
 		mtx.Unlock()
 
+
+		if job == "" {
+			http.Error(w, "job name is required", http.StatusBadRequest)
+			level.Debug(logger).Log("msg", "job name is required")
+			return
+		}
+
+		// labels => map[labelName]labelValue
 		labels, err := splitLabels(labelsString)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			level.Debug(logger).Log("msg", "failed to parse URL", "url", labelsString, "err", err.Error())
 			return
 		}
-		if job == "" {
-			http.Error(w, "job name is required", http.StatusBadRequest)
-			level.Debug(logger).Log("msg", "job name is required")
-			return
-		}
 		labels["job"] = job
 
+
+		// get metricFamilies from r.Body
 		var metricFamilies map[string]*dto.MetricFamily
 		ctMediatype, ctParams, ctErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if ctErr == nil && ctMediatype == "application/vnd.google.protobuf" &&
+		if  ctErr == nil &&
+			ctMediatype == "application/vnd.google.protobuf" &&
 			ctParams["encoding"] == "delimited" &&
 			ctParams["proto"] == "io.prometheus.client.MetricFamily" {
 			metricFamilies = map[string]*dto.MetricFamily{}
@@ -100,9 +119,9 @@ func Push(
 				metricFamilies[mf.GetName()] = mf
 			}
 		} else {
-			// We could do further content-type checks here, but the
-			// fallback for now will anyway be the text format
-			// version 0.0.4, so just go for it and see if it works.
+			// We could do further content-type checks here,
+			// but the fallback for now will anyway be the text format version 0.0.4,
+			// so just go for it and see if it works.
 			var parser expfmt.TextParser
 			metricFamilies, err = parser.TextToMetricFamilies(r.Body)
 		}
@@ -111,6 +130,7 @@ func Push(
 			level.Debug(logger).Log("msg", "failed to parse text", "err", err.Error())
 			return
 		}
+
 		now := time.Now()
 		if !check {
 			ms.SubmitWriteRequest(storage.WriteRequest{
@@ -122,6 +142,9 @@ func Push(
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
+
+
+
 		errCh := make(chan error, 1)
 		errReceived := false
 		ms.SubmitWriteRequest(storage.WriteRequest{
@@ -129,34 +152,42 @@ func Push(
 			Timestamp:      now,
 			MetricFamilies: metricFamilies,
 			Replace:        replace,
-			Done:           errCh,
+			Done:           errCh,  //
 		})
+
+
 		for err := range errCh {
+
+
 			// Send only first error via HTTP, but log all of them.
-			// TODO(beorn): Consider sending all errors once we
-			// have a use case. (Currently, at most one error is
-			// produced.)
+			// TODO(beorn): Consider sending all errors once we have a use case.
+			// (Currently, at most one error is produced.)
+
 			if !errReceived {
-				http.Error(
-					w,
+				http.Error(w,
 					fmt.Sprintf("pushed metrics are invalid or inconsistent with existing metrics: %v", err),
 					http.StatusBadRequest,
 				)
 			}
+
 			level.Error(logger).Log(
 				"msg", "pushed metrics are invalid or inconsistent with existing metrics",
 				"method", r.Method,
 				"source", r.RemoteAddr,
 				"err", err.Error(),
 			)
+
 			errReceived = true
 		}
 	})
 
+
 	instrumentedHandler := promhttp.InstrumentHandlerRequestSize(
-		httpPushSize, promhttp.InstrumentHandlerDuration(
+		httpPushSize,
+		promhttp.InstrumentHandlerDuration(
 			httpPushDuration, InstrumentWithCounter("push", handler),
-		))
+		),
+	)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		mtx.Lock()
@@ -174,10 +205,12 @@ func decodeBase64(s string) (string, error) {
 
 // splitLabels splits a labels string into a label map mapping names to values.
 func splitLabels(labels string) (map[string]string, error) {
+
 	result := map[string]string{}
 	if len(labels) <= 1 {
 		return result, nil
 	}
+
 	components := strings.Split(labels[1:], "/")
 	if len(components)%2 != 0 {
 		return nil, fmt.Errorf("odd number of components in label string %q", labels)

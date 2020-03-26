@@ -22,6 +22,8 @@ import (
 )
 
 var (
+
+
 	httpCnt = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "pushgateway_http_requests_total",
@@ -29,6 +31,8 @@ var (
 		},
 		[]string{"handler", "code", "method"},
 	)
+
+
 	httpPushSize = promauto.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Name:       "pushgateway_http_push_size_bytes",
@@ -37,6 +41,8 @@ var (
 		},
 		[]string{"method"},
 	)
+
+
 	httpPushDuration = promauto.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Name:       "pushgateway_http_push_duration_seconds",
@@ -45,6 +51,7 @@ var (
 		},
 		[]string{"method"},
 	)
+
 )
 
 func InstrumentWithCounter(handlerName string, handler http.Handler) http.HandlerFunc {

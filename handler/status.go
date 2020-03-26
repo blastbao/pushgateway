@@ -27,7 +27,7 @@ import (
 	"github.com/go-kit/kit/log/level"
 
 	"github.com/prometheus/common/version"
-	"github.com/prometheus/pushgateway/storage"
+	"github.com/blastbao/pushgateway/storage"
 )
 
 type data struct {
@@ -59,6 +59,8 @@ func Status(
 	logger log.Logger,
 ) http.Handler {
 	birth := time.Now()
+
+
 	return InstrumentWithCounter(
 		"status",
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -75,6 +77,8 @@ func Status(
 				},
 			})
 
+
+
 			f, err := root.Open("template.html")
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -82,12 +86,16 @@ func Status(
 				return
 			}
 			defer f.Close()
+
+
 			tpl, err := ioutil.ReadAll(f)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				level.Error(logger).Log("msg", "error reading template.html", "err", err.Error())
 				return
 			}
+
+
 			_, err = t.Parse(string(tpl))
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)

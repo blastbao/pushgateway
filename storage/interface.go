@@ -67,6 +67,13 @@ type MetricStore interface {
 	Ready() error
 }
 
+
+
+
+
+
+
+
 // WriteRequest is a request to change the MetricStore, i.e. to process it, a
 // write lock has to be acquired.
 //
@@ -78,7 +85,9 @@ type MetricStore interface {
 // with the same grouping key. Otherwise, only those MetricFamilies whith the
 // same name as new MetricFamilies will be replaced.
 //
+//
 // The key in MetricFamilies is the name of the mapped metric family.
+//
 //
 // When the WriteRequest is processed, the metrics in MetricFamilies will be
 // sanitized to have the same job and other labels as those in the Labels
@@ -86,35 +95,50 @@ type MetricStore interface {
 // value will be set. This implies that the MetricFamilies in the WriteRequest
 // may be modified be the MetricStore during processing of the WriteRequest!
 //
+//
 // The Timestamp field marks the time the request was received from the
 // network. It is not related to the TimestampMs field in the Metric proto
 // message. In fact, WriteRequests containing any Metrics with a TimestampMs set
 // are invalid and will be rejected.
 //
+//
 // The Done channel may be nil. If it is not nil, it will be closed once the
 // write request is processed. Any errors occuring during processing are sent to
 // the channel before closing it.
+//
 type WriteRequest struct {
-	Labels         map[string]string
-	Timestamp      time.Time
-	MetricFamilies map[string]*dto.MetricFamily
-	Replace        bool
-	Done           chan error
+	Labels         map[string]string				//
+	Timestamp      time.Time						//
+	MetricFamilies map[string]*dto.MetricFamily		//
+	Replace        bool								//
+	Done           chan error						//
 }
 
-// GroupingKeyToMetricGroup is the first level of the metric store, keyed by
-// grouping key.
+// GroupingKeyToMetricGroup is the first level of the metric store, keyed by grouping key.
+//
+//
+// map[groupKey] => MetricGroup
+//
+// groupKey is a string joining all label names and values together with
+// model.SeparatorByte as a separator. It's reproducible and unique.
+//
 type GroupingKeyToMetricGroup map[string]MetricGroup
 
+
 // MetricGroup adds the grouping labels to a NameToTimestampedMetricFamilyMap.
+//
+//
 type MetricGroup struct {
-	Labels  map[string]string
-	Metrics NameToTimestampedMetricFamilyMap
+	Labels  map[string]string					// labels
+	Metrics NameToTimestampedMetricFamilyMap 	// Metrics[metricName] => [dto.MetricFamily with push timestamp]
 }
 
-// SortedLabels returns the label names of the grouping labels sorted
-// lexicographically but with the "job" label always first. This method exists
-// for presentation purposes, see template.html.
+
+
+// SortedLabels returns the label names of the grouping labels sorted lexicographically
+// but with the "job" label always first.
+//
+// This method exists for presentation purposes, see template.html.
 func (mg MetricGroup) SortedLabels() []string {
 	lns := make([]string, 1, len(mg.Labels))
 	lns[0] = "job"
@@ -127,49 +151,84 @@ func (mg MetricGroup) SortedLabels() []string {
 	return lns
 }
 
+
+
 // LastPushSuccess returns false if the automatically added metric for the
 // timestamp of the last failed push has a value larger than the value of the
-// automatically added metric for the timestamp of the last successful push. In
-// all other cases, it returns true (including the case that one or both of
+// automatically added metric for the timestamp of the last successful push.
+//
+// In all other cases, it returns true (including the case that one or both of
 // those metrics are missing for some reason.)
 func (mg MetricGroup) LastPushSuccess() bool {
+
+	// mg.Metrics[pushFailedMetricName] => all failed pushed metrics
 	fail := mg.Metrics[pushFailedMetricName].GobbableMetricFamily
 	if fail == nil {
 		return true
 	}
+
+	// mg.Metrics[pushMetricName] => all successful pushed metrics
 	success := mg.Metrics[pushMetricName].GobbableMetricFamily
 	if success == nil {
 		return true
 	}
-	return (*dto.MetricFamily)(fail).GetMetric()[0].GetGauge().GetValue() <= (*dto.MetricFamily)(success).GetMetric()[0].GetGauge().GetValue()
+
+	//
+	failMetricFamily := (*dto.MetricFamily)(fail)
+	failMetric := failMetricFamily.GetMetric()
+	firstFailMetric := failMetric[0].GetGauge().GetValue()
+
+	succMetricFamily := (*dto.MetricFamily)(success)
+	succMetric := succMetricFamily.GetMetric()
+	firstSuccMetric := succMetric[0].GetGauge().GetValue()
+
+
+
+	//
+
+	return firstFailMetric <= firstSuccMetric
 }
 
-// NameToTimestampedMetricFamilyMap is the second level of the metric store,
-// keyed by metric name.
+
+
+
+
+
+// NameToTimestampedMetricFamilyMap is the second level of the metric store, keyed by metric name.
+//
+// map[MetricName] => [dto.MetricFamily with push timestamp]
 type NameToTimestampedMetricFamilyMap map[string]TimestampedMetricFamily
 
-// TimestampedMetricFamily adds the push timestamp to a gobbable version of the
-// MetricFamily-DTO.
+
+
+// TimestampedMetricFamily adds the push timestamp to a gobbable version of the MetricFamily-DTO.
 type TimestampedMetricFamily struct {
-	Timestamp            time.Time
-	GobbableMetricFamily *GobbableMetricFamily
+	Timestamp            time.Time				// push timestamp
+	GobbableMetricFamily *GobbableMetricFamily  // refer to origin dto.MetricFamily
 }
+
+
 
 // GetMetricFamily returns the normal GetMetricFamily DTO (without the gob additions).
 func (tmf TimestampedMetricFamily) GetMetricFamily() *dto.MetricFamily {
-	return (*dto.MetricFamily)(tmf.GobbableMetricFamily)
+	// convert from tmf.GobbableMetricFamily to dto.MetricFamily
+	metricFamily := (*dto.MetricFamily)(tmf.GobbableMetricFamily)
+	return metricFamily
 }
 
-// GobbableMetricFamily is a dto.MetricFamily that implements GobDecoder and
-// GobEncoder.
+
+
+// GobbableMetricFamily is a dto.MetricFamily that implements GobDecoder and GobEncoder.
 type GobbableMetricFamily dto.MetricFamily
 
 // GobDecode implements gob.GobDecoder.
 func (gmf *GobbableMetricFamily) GobDecode(b []byte) error {
-	return proto.Unmarshal(b, (*dto.MetricFamily)(gmf))
+	metricFamily := (*dto.MetricFamily)(gmf)
+	return proto.Unmarshal(b, metricFamily)
 }
 
 // GobEncode implements gob.GobEncoder.
 func (gmf *GobbableMetricFamily) GobEncode() ([]byte, error) {
-	return proto.Marshal((*dto.MetricFamily)(gmf))
+	metricFamily := (*dto.MetricFamily)(gmf)
+	return proto.Marshal(metricFamily)
 }
